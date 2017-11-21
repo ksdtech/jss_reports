@@ -5,6 +5,8 @@ import re
 import requests
 import sys
 import jss_credentials
+from urllib.request import urlopen
+from bs4 import BeautifulSoup
 
 class JssReports:
 
@@ -32,6 +34,20 @@ class JssReports:
         size = len(all_devices)
         print('{} devices in all_mobile_devices'.format(size))
         self.all_mobile_devices_size = size
+
+
+    def fetch_app_price(self, app_url):
+        page = urlopen(app_url)
+        soup = BeautifulSoup(page, 'html.parser')
+        price_divs = soup.select('#left-stack .price')
+        price = None
+        if price_divs:
+            price = price_divs[0].get('content')
+        if price is None:
+            price = 0.0
+        else:
+            price = float(price.replace('$', ''))
+        return price
 
 
     def get_device_groups(self):
@@ -121,6 +137,7 @@ class JssReports:
         itunes_store_url = app['itunes_store_url']
         m = re.search(r'\/id(\d+)($|\?)', itunes_store_url)
         if m:
+            price = self.fetch_app_price(itunes_store_url)
             adam_id = m.group(1)
             d = { 'id': app_id
                 , 'name': name
@@ -128,10 +145,11 @@ class JssReports:
                 , 'adam_id': adam_id
                 , 'identifier': identifier
                 , 'link': itunes_store_url
+                , 'price': price
                 , 'deploy_automatically': app['deploy_automatically']
                 , 'vpp_device_assignment': vpp['assign_vpp_device_based_licenses'] if vpp else False
-                , 'vpp_licenses_total': vpp['total_vpp_licenses'] if (vpp and 'total_vpp_licenses' in vpp) else 0
-                , 'vpp_licenses_used': vpp['used_vpp_licenses'] if (vpp and 'used_vpp_licenses' in vpp) else 0
+                , 'vpp_licenses_total': int(vpp['total_vpp_licenses']) if (vpp and 'total_vpp_licenses' in vpp) else 0
+                , 'vpp_licenses_used': int(vpp['used_vpp_licenses']) if (vpp and 'used_vpp_licenses' in vpp) else 0
                 , 'all_mobile_devices': scope['all_mobile_devices']
                 , 'mobile_devices': [
                     { 'id': device['id']
@@ -161,9 +179,9 @@ class JssReports:
 
 
     def collect_all(self):
+        self.get_apps()
         self.get_all_mobile_devices()
         self.get_device_groups()
-        self.get_apps()
         self.get_vpp_assignments()
 
 
@@ -173,7 +191,7 @@ class JssReports:
             w.writerow(['name', 'adam_id', 'identifier', 'link',
                 'free', 'deploy_automatically',
                 'vpp_device_assignment', 'vpp_licenses_total', 'vpp_licenses_used',
-                'devices_in_scope', 'scope'])
+                'devices_in_scope', 'licenses_needed', 'total_cost', 'scope'])
             for adam_id in self.apps_by_adam:
                 app = self.apps_by_adam[adam_id]
                 scope = []
@@ -193,6 +211,11 @@ class JssReports:
                             for device_id in device_group['device_ids']:
                                 group_device_ids[device_id] = 1
                     group_size = len(group_device_ids)
+                    need = 0
+                    cost = 0
+                    if group_size > app['vpp_licenses_total']:
+                        need = float(group_size - app['vpp_licenses_total'])
+                        cost = need * float(app['price'])
 
                 scope += [ device['name'] for device in app['mobile_devices'] ]
                 scope += [ group['name'] for group in app['mobile_device_groups'] ]
@@ -200,8 +223,7 @@ class JssReports:
                     app['free'], app['deploy_automatically'],
                     app['vpp_device_assignment'],
                     app['vpp_licenses_total'], app['vpp_licenses_used'],
-                    group_size,
-                    ','.join(scope)])
+                    group_size, need, cost, ','.join(scope)])
 
 
 if __name__ == '__main__':

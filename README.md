@@ -23,6 +23,10 @@ LDAP application, such as [jXplorer](http://jxplorer.org/).  Uses input TSV file
 Used this to list information about mobile device apps, vpp assignments, etc. in
 a Google sheet.
 
+Fetching prices from iTunes Store:
+Find this div on the app page: #left-stack div.price
+The price, either "0" or something like "$1.99" is in the "content" attribute
+
 
 ## update_device_apps.py
 
