@@ -14,14 +14,24 @@ class JssReports:
         self.password = password
         self.vpp_assignment_ids = []
         self.app_ids = []
+        self.all_mobile_devices_size = 0
         self.device_group_ids = []
         self.user_group_ids = []
         self.devices_by_name = { }
         self.devices_by_mac = { }
         self.apps_by_adam = { }
-        self.app_user_assignments = { }
-        self.device_groups = { }
+        self.device_groups_by_id = { }
+        self.device_groups_by_name = { }
         self.user_groups = { }
+
+
+    def get_all_mobile_devices(self):
+        url = '{}/mobiledevices'.format(self.base_url)
+        r = requests.get(url, auth=(self.user, self.password), headers={'Accept': 'application/json'})
+        all_devices = r.json()['mobile_devices']
+        size = len(all_devices)
+        print('{} devices in all_mobile_devices'.format(size))
+        self.all_mobile_devices_size = size
 
 
     def get_device_groups(self):
@@ -33,25 +43,13 @@ class JssReports:
             r = requests.get(url, auth=(self.user, self.password), headers={'Accept': 'application/json'})
             obj = r.json()['mobile_device_group']
             print('processing {}'.format(obj['name']))
-            d = { 'is_smart': obj['is_smart']
+            d = { 'id': obj['id']
+                , 'is_smart': obj['is_smart']
                 , 'size': len(obj['mobile_devices'])
+                , 'device_ids': [ device['id'] for device in obj['mobile_devices'] ]
                 }
-            self.device_groups[obj['name']] = d
-
-
-    def get_user_groups(self):
-        url = '{}/usergroups'.format(self.base_url)
-        r = requests.get(url, auth=(self.user, self.password), headers={'Accept': 'application/json'})
-        self.user_group_ids = [ a['id'] for a in r.json()['user_groups'] ]
-        for user_group_id in self.user_group_ids:
-            url = '{}/usergroups/id/{}'.format(self.base_url, user_group_id)
-            r = requests.get(url, auth=(self.user, self.password), headers={'Accept': 'application/json'})
-            obj = r.json()['user_group']
-            print('processing {}'.format(obj['name']))
-            d = { 'is_smart': obj['is_smart']
-                , 'size': len(obj['users'])
-                }
-            self.user_groups[obj['name']] = d
+            self.device_groups_by_id[obj['id']] = d
+            self.device_groups_by_name[obj['name']] = d
 
 
     # TODO: Where do you find the 'In Use' and 'Reported' numbers?
@@ -75,11 +73,7 @@ class JssReports:
                     , 'app_adam_id': adam_id
                     , 'vpp_assignment_id': vpp_assignment_id
                     , 'vpp_assignment_name': vpp_assignment_name
-                    , 'all_jss_users': scope['all_jss_users']
-                    , 'jss_users': [ user['name'] for user in scope['jss_users'] ]
-                    , 'jss_user_groups': [ group['name'] for group in scope['jss_user_groups'] ]
                     }
-                self.app_user_assignments[adam_id] = d
                 if adam_id in self.apps_by_adam:
                     if 'vpp_assignment_name' in self.apps_by_adam[adam_id]['vpp_assignments']:
                         print('app {} already has assignment {}'.format(app_name, self.apps_by_adam[adam_id]['vpp_assignments']['vpp_assignment_name']))
@@ -88,6 +82,7 @@ class JssReports:
                 else:
                     print('no app found for {} (adam_id {})'.format(app_name, adam_id))
 
+
     def get_devices(self):
         url = '{}/mobiledevices'.format(self.base_url)
         r = requests.get(url, auth=(self.user, self.password), headers={'Accept': 'application/json'})
@@ -95,10 +90,11 @@ class JssReports:
             device_id = obj['id']
             name = obj['username'] # ipad-1567
             mac_address = obj['wifi_mac_address']
-            d = { 'name': name
+            d = { 'id': 'device_id'
+                , 'name': name
                 , 'mac_address': mac_address
-                , 'model': obj['model']
                 , 'serial_number': obj['serial_number']
+                , 'model': obj['model']
                 }
             self.devices_by_name[name] = d
             self.devices_by_mac[mac_address] = d
@@ -137,8 +133,14 @@ class JssReports:
                 , 'vpp_licenses_total': vpp['total_vpp_licenses'] if (vpp and 'total_vpp_licenses' in vpp) else 0
                 , 'vpp_licenses_used': vpp['used_vpp_licenses'] if (vpp and 'used_vpp_licenses' in vpp) else 0
                 , 'all_mobile_devices': scope['all_mobile_devices']
-                , 'mobile_devices': [ user['name'] for user in scope['mobile_devices'] ]
-                , 'mobile_device_groups': [ group['name'] for group in scope['mobile_device_groups'] ]
+                , 'mobile_devices': [
+                    { 'id': device['id']
+                    , 'name': device['name']
+                    } for device in scope['mobile_devices'] ]
+                , 'mobile_device_groups': [
+                    { 'id': group['id']
+                    , 'name': group['name']
+                    } for group in scope['mobile_device_groups'] ]
                 , 'vpp_assignments': {}
                 }
             print(json.dumps(d, indent=2))
@@ -146,6 +148,7 @@ class JssReports:
         else:
             print('could not parse adam_id from url {}'.format(itunes_store_url))
             return None
+
 
     def get_apps(self):
         url = '{}/mobiledeviceapplications'.format(self.base_url)
@@ -156,37 +159,49 @@ class JssReports:
             if d:
                 self.apps_by_adam[d['adam_id']] = d
 
+
     def collect_all(self):
+        self.get_all_mobile_devices()
         self.get_device_groups()
-        self.get_user_groups()
         self.get_apps()
         self.get_vpp_assignments()
 
+
     def report(self, filename):
-        print('Apps still using user assignment ---')
         with open(filename, 'w') as csvfile:
             w = csv.writer(csvfile, dialect='excel', quoting=csv.QUOTE_ALL)
             w.writerow(['name', 'adam_id', 'identifier', 'link',
                 'free', 'deploy_automatically',
                 'vpp_device_assignment', 'vpp_licenses_total', 'vpp_licenses_used',
-                'scope', 'assignments'])
+                'devices_in_scope', 'scope'])
             for adam_id in self.apps_by_adam:
                 app = self.apps_by_adam[adam_id]
-                scope = app['mobile_devices'] + app['mobile_device_groups']
+                scope = []
+                group_size = 0
                 if app['all_mobile_devices']:
                     scope.append('all')
-                assignments = []
-                if 'jss_users' in app['vpp_assignments']:
-                    assignments += app['vpp_assignments']['jss_users']
-                if 'jss_user_groups' in app['vpp_assignments']:
-                    assignments += app['vpp_assignments']['jss_user_groups']
-                if 'all_jss_users' in app['vpp_assignments']:
-                    if app['vpp_assignments']['all_jss_users']:
-                        assignments.append('all')
+                    group_size = self.all_mobile_devices_size
+                else:
+                    group_device_ids = { }
+                    for device in app['mobile_devices']:
+                        group_device_ids[device['id']] = 1
+                    for group in app['mobile_device_groups']:
+                        device_group = self.device_groups_by_id.get(group['id'])
+                        if device_group is None:
+                            print('could not find device group with id {}'.format(group['id']))
+                        else:
+                            for device_id in device_group['device_ids']:
+                                group_device_ids[device_id] = 1
+                    group_size = len(group_device_ids)
+
+                scope += [ device['name'] for device in app['mobile_devices'] ]
+                scope += [ group['name'] for group in app['mobile_device_groups'] ]
                 w.writerow([app['name'], app['adam_id'], app['identifier'], app['link'],
                     app['free'], app['deploy_automatically'],
-                    app['vpp_device_assignment'], app['vpp_licenses_total'], app['vpp_licenses_used'],
-                    ','.join(scope), ','.join(assignments)])
+                    app['vpp_device_assignment'],
+                    app['vpp_licenses_total'], app['vpp_licenses_used'],
+                    group_size,
+                    ','.join(scope)])
 
 
 if __name__ == '__main__':
